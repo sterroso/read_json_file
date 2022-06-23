@@ -2,9 +2,11 @@ import json
 from sys import stderr
 from unittest.mock import Base
 import requests as reqs
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError, BaseHTTPError
+from urllib3.exceptions import NewConnectionError, MaxRetryError
 
 from pandas import DataFrame, ExcelWriter
+
 
 def write_estados():
     filename = 'inegi_agem_07.json'
@@ -43,26 +45,25 @@ def get_estados() -> list:
     # TODO: Implementar try/except para manejar posibles errores.
     try:
         response = reqs.get(base_url)
-    except (ConnectionError) as e:
-        stderr.write('No fue posible conectarse al servicio web de INEGI.\n')
-        return list_estados
+    except:
+        raise
+    else:
+        # Primero verificar si el código de respuesta de la consulta fue exitoso.
+        if response.status_code == 200:
+            estados = response.json()['datos']
 
-    # Primero verificar si el código de respuesta de la consulta fue exitoso.
-    if response.status_code == 200:
-        estados = response.json()['datos']
-
-        for estado in estados:
-            list_estados.append({
-                'clave': estado['cve_agee'],
-                'nombre': estado['nom_agee'],
-                'abreviatura_nombre': estado['nom_abrev'],
-                'poblacion_total': estado['pob'],
-                'poblacion_femenina': estado['pob_fem'],
-                'poblacion_masculina': estado['pob_mas'],
-                'viviendas_totales_habitadas': estado['viv']
-            })
+            for estado in estados:
+                list_estados.append({
+                    'clave': estado['cve_agee'],
+                    'nombre': estado['nom_agee'],
+                    'abreviatura_nombre': estado['nom_abrev'],
+                    'poblacion_total': estado['pob'],
+                    'poblacion_femenina': estado['pob_fem'],
+                    'poblacion_masculina': estado['pob_mas'],
+                    'viviendas_totales_habitadas': estado['viv']
+                })
     
-    return list_estados
+        return list_estados
 
 
 def get_municipios_by_clave_estado(clave_estado: int) -> list:
@@ -80,30 +81,29 @@ def get_municipios_by_clave_estado(clave_estado: int) -> list:
     # TODO: implementar try /except para manejar posibles errores.
     try:
         response = reqs.get(query_url)
-    except (ConnectionError):
-        stderr.write('No fué posible conectarse.\n')
+    except:
+        raise
+    else:
+        if response.status_code == 200:
+            # De la respuesta se extrae únicamente la rama que nos interesa.
+            municipios = response.json()['features']
+
+            # Por cada municipio úncamente extraemos los datos que nos interesan
+            # y los agregamos a un diccionario que ponemos al final de la lista de
+            # municipios.
+            for municipio in municipios:
+                list_municipios.append({
+                    'clave': int(municipio['properties']['cvegeo']),
+                    'nombre': municipio['properties']['nom_agem'],
+                    'poblacion_total': int(municipio['properties']['pob']),
+                    'poblacion_femenina': int(municipio['properties']['pob_fem']),
+                    'poblacion_masculina': int(municipio['properties']['pob_mas']),
+                    'viviendas_totales_habitadas': int(municipio['properties']['viv'])
+                })
+            
+        # Devolvemos la lista de municipios ya poblada con los datos recuperados
+        # del catálogo del INEGI.
         return list_municipios
-
-    if response.status_code == 200:
-        # De la respuesta se extrae únicamente la rama que nos interesa.
-        municipios = response.json()['features']
-
-        # Por cada municipio úncamente extraemos los datos que nos interesan
-        # y los agregamos a un diccionario que ponemos al final de la lista de
-        # municipios.
-        for municipio in municipios:
-            list_municipios.append({
-                'clave': int(municipio['properties']['cvegeo']),
-                'nombre': municipio['properties']['nom_agem'],
-                'poblacion_total': int(municipio['properties']['pob']),
-                'poblacion_femenina': int(municipio['properties']['pob_fem']),
-                'poblacion_masculina': int(municipio['properties']['pob_mas']),
-                'viviendas_totales_habitadas': int(municipio['properties']['viv'])
-            })
-        
-    # Devolvemos la lista de municipios ya poblada con los datos recuperados
-    # del catálogo del INEGI.
-    return list_municipios
 
 
 if __name__ == '__main__':
@@ -128,6 +128,9 @@ if __name__ == '__main__':
                 list_municipios = get_municipios_by_clave_estado(int_clave_estado)
                 for municipio in list_municipios:
                     print('{clave} {nombre} {poblacion_total:,}'.format(**municipio))
-        except Exception:
-            print('No se reconoce la entrada.')
+        except (ConnectionError, BaseHTTPError, NewConnectionError, MaxRetryError) as e:
+            stderr.write('Error de conección al servicio web de INEGI.\n')
+            break;
+        except:
+            stderr.write('Error desconocido.')
             break;
